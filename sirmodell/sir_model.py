@@ -1,11 +1,37 @@
+import tkinter as tk
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, CheckButtons
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.ticker import StrMethodFormatter
+
+plt.style.use("seaborn-v0_8-whitegrid")
+
+sir_window = None
 
 def run():
-    N = 10000 
+    global sir_window
 
-    def SIR_model(S, I, R, beta, gamma):
+    if sir_window is not None and sir_window.winfo_exists():
+        sir_window.lift()
+        return
+
+    window = tk.Toplevel()
+    sir_window = window
+
+    window.title("SIR járványmodell")
+    window.geometry("1100x560")
+    window.minsize(1000, 520)
+
+    def on_close():
+        global sir_window
+        sir_window = None
+        window.destroy()
+
+    window.protocol("WM_DELETE_WINDOW", on_close)
+
+    N = 10000
+
+    def sir(S, I, R, beta, gamma):
         dS = -beta * S * I
         dI = beta * S * I - gamma * I
         dR = gamma * I
@@ -13,116 +39,273 @@ def run():
 
     def simulate(S0, I0, R0, beta, gamma, days=160, dt=0.1):
         steps = int(days / dt)
-        S, I, R = [S0], [I0], [R0]
+
+        S = [S0]
+        I = [I0]
+        R = [R0]
+
         for _ in range(steps):
-            dS, dI, dR = SIR_model(S[-1], I[-1], R[-1], beta, gamma)
+            dS, dI, dR = sir(S[-1], I[-1], R[-1], beta, gamma)
             S.append(S[-1] + dS * dt)
             I.append(I[-1] + dI * dt)
             R.append(R[-1] + dR * dt)
-        t = np.linspace(0, days, steps + 1)
-        S = np.array(S) * N
-        I = np.array(I) * N
-        R = np.array(R) * N
-        return t, S, I, R
 
+        t = np.linspace(0, days, steps + 1)
+        return t, np.array(S) * N, np.array(I) * N, np.array(R) * N
+    
     S0_init = 0.99
     I0_init = 0.01
     R0_init = 0.0
     beta_init = 0.35
-    gamma_init = 0.1
+    gamma_init = 0.10
 
-    fig, ax = plt.subplots(figsize=(10,6))
-    plt.subplots_adjust(left=0.25, bottom=0.45, right=0.85)
+    main_frame = tk.Frame(window)
+    main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    control_frame = tk.Frame(main_frame)
+    control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15))
+
+    chart_frame = tk.Frame(main_frame)
+    chart_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    fig, ax = plt.subplots(figsize=(7, 4.8))
+    canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     t, S, I, R = simulate(S0_init, I0_init, R0_init, beta_init, gamma_init)
-    lS, = ax.plot(t, S, label='Fogékony (S)')
-    lI, = ax.plot(t, I, label='Fertőzött (I)')
-    lR, = ax.plot(t, R, label='Gyógyult (R)')
-    ax.set_xlabel('Napok száma')
-    ax.set_ylabel('Szám a populációban')
-    ax.set_title('SIR modell a védelmi intézkedések figyelembevételével')
-    ax.legend()
-    ax.grid()
 
-    ax_beta = plt.axes([0.3, 0.35, 0.5, 0.03])
-    ax_gamma = plt.axes([0.3, 0.31, 0.5, 0.03])
-    ax_I0 = plt.axes([0.3, 0.27, 0.5, 0.03])
-    ax_mask = plt.axes([0.3, 0.23, 0.5, 0.03])
-    ax_vax = plt.axes([0.3, 0.19, 0.5, 0.03])
-    ax_recover = plt.axes([0.3, 0.15, 0.5, 0.03])
-    ax_dist = plt.axes([0.3, 0.11, 0.5, 0.03])
+    lS, = ax.plot(t, S, label="Fogékony", color="tab:blue", linewidth=2)
+    lI, = ax.plot(t, I, label="Fertőzött", color="tab:red", linewidth=2)
+    lR, = ax.plot(t, R, label="Gyógyult", color="tab:green", linewidth=2)
 
-    s_beta = Slider(ax_beta, 'Transzmissziós arány (β)', 0.0, 1.0, valinit=beta_init, valstep=0.01)
-    s_gamma = Slider(ax_gamma, 'Gyógyulási arány (γ)', 0.0, 1.0, valinit=gamma_init, valstep=0.01)
-    s_I0 = Slider(ax_I0, 'Kezdeti prevalencia', 0.0, 0.1, valinit=I0_init, valstep=0.001)
-    s_mask = Slider(ax_mask, 'Maszkhasználat aránya', 0.0, 1.0, valinit=0.0, valstep=0.01)
-    s_vax = Slider(ax_vax, 'Oltottsági arány', 0.0, 1.0, valinit=0.0, valstep=0.01)
-    s_recover = Slider(ax_recover, 'Immunitással rendelkezők', 0.0, 1.0, valinit=0.0, valstep=0.01)
-    s_dist = Slider(ax_dist, 'Szociális távolságtartás mértéke', 0.0, 1.0, valinit=0.0, valstep=0.01)
+    ax.set_title("SIR járványdinamika")
+    ax.set_xlabel("Napok")
+    ax.set_ylabel("Egyének száma")
+    ax.legend(frameon=False)
+    ax.grid(alpha=0.3)
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+    fig.tight_layout(pad=2)
 
-    def create_checkbox(ax_pos, init=True):
-        ax_cb = plt.axes(ax_pos)
-        check = CheckButtons(ax_cb, [''], [init])
-        txt = ax_cb.text(0.7, 0.5, 'BE' if init else 'KI', ha='left', va='center', transform=ax_cb.transAxes)
-        return check, txt
+    tk.Label(
+        control_frame,
+        text="Modell paraméterei",
+        font=("Segoe UI", 12, "bold")
+    ).pack(anchor="w", pady=(0, 8))
 
-    check_mask, txt_mask = create_checkbox([0.85, 0.23, 0.08, 0.03])
-    check_vax, txt_vax = create_checkbox([0.85, 0.19, 0.08, 0.03])
-    check_recover, txt_recover = create_checkbox([0.85, 0.15, 00.08, 0.03])
-    check_dist, txt_dist = create_checkbox([0.85, 0.11, 0.08, 0.03])
+    slider_width = 260
 
-    mask_on = [True]
-    vax_on = [True]
-    recover_on = [True]
-    dist_on = [True]
+    beta_slider = tk.Scale(
+        control_frame,
+        from_=0,
+        to=1,
+        resolution=0.01,
+        orient=tk.HORIZONTAL,
+        label="β fertőzési ráta",
+        length=slider_width,
+        font=("Segoe UI", 9)
+    )
+    beta_slider.set(beta_init)
+    beta_slider.pack(anchor="w", pady=2)
 
-    def toggle_mask(label):
-        mask_on[0] = not mask_on[0]
-        txt_mask.set_text('BE' if mask_on[0] else 'KI')
-        update(None)
-    check_mask.on_clicked(toggle_mask)
+    gamma_slider = tk.Scale(
+        control_frame,
+        from_=0,
+        to=1,
+        resolution=0.01,
+        orient=tk.HORIZONTAL,
+        label="γ gyógyulási ráta",
+        length=slider_width,
+        font=("Segoe UI", 9)
+    )
+    gamma_slider.set(gamma_init)
+    gamma_slider.pack(anchor="w", pady=2)
 
-    def toggle_vax(label):
-        vax_on[0] = not vax_on[0]
-        txt_vax.set_text('BE' if vax_on[0] else 'KI')
-        update(None)
-    check_vax.on_clicked(toggle_vax)
+    I0_slider = tk.Scale(
+        control_frame,
+        from_=0,
+        to=0.1,
+        resolution=0.001,
+        orient=tk.HORIZONTAL,
+        label="Kezdeti fertőzöttek aránya",
+        length=slider_width,
+        font=("Segoe UI", 9)
+    )
+    I0_slider.set(I0_init)
+    I0_slider.pack(anchor="w", pady=2)
 
-    def toggle_recover(label):
-        recover_on[0] = not recover_on[0]
-        txt_recover.set_text('BE' if recover_on[0] else 'KI')
-        update(None)
-    check_recover.on_clicked(toggle_recover)
+    mask_slider = tk.Scale(
+        control_frame,
+        from_=0,
+        to=1,
+        resolution=0.01,
+        orient=tk.HORIZONTAL,
+        label="Maszkhasználat aránya",
+        length=slider_width,
+        font=("Segoe UI", 9)
+    )
+    mask_slider.set(0.0)
+    mask_slider.pack(anchor="w", pady=2)
 
-    def toggle_dist(label):
-        dist_on[0] = not dist_on[0]
-        txt_dist.set_text('BE' if dist_on[0] else 'KI')
-        update(None)
-    check_dist.on_clicked(toggle_dist)
+    vax_slider = tk.Scale(
+        control_frame,
+        from_=0,
+        to=1,
+        resolution=0.01,
+        orient=tk.HORIZONTAL,
+        label="Oltottsági arány",
+        length=slider_width,
+        font=("Segoe UI", 9)
+    )
+    vax_slider.set(0.0)
+    vax_slider.pack(anchor="w", pady=2)
 
-    def update(val):
-        beta = s_beta.val
-        gamma = s_gamma.val
-        I0 = s_I0.val
+    recover_slider = tk.Scale(
+        control_frame,
+        from_=0,
+        to=1,
+        resolution=0.01,
+        orient=tk.HORIZONTAL,
+        label="Immunitással rendelkezők",
+        length=slider_width,
+        font=("Segoe UI", 9)
+    )
+    recover_slider.set(0.0)
+    recover_slider.pack(anchor="w", pady=2)
+
+    dist_slider = tk.Scale(
+        control_frame,
+        from_=0,
+        to=1,
+        resolution=0.01,
+        orient=tk.HORIZONTAL,
+        label="Szociális távolságtartás",
+        length=slider_width,
+        font=("Segoe UI", 9)
+    )
+    dist_slider.set(0.0)
+    dist_slider.pack(anchor="w", pady=2)
+
+    tk.Label(
+        control_frame,
+        text="Intézkedések kapcsolása",
+        font=("Segoe UI", 10, "bold")
+    ).pack(anchor="w", pady=(10, 4))
+
+    mask_on = tk.BooleanVar(value=True)
+    vax_on = tk.BooleanVar(value=True)
+    recover_on = tk.BooleanVar(value=True)
+    dist_on = tk.BooleanVar(value=True)
+
+    check_frame = tk.Frame(control_frame)
+    check_frame.pack(anchor="w", pady=(0, 10))
+
+    info_label = tk.Label(
+        control_frame,
+        text="",
+        justify="left",
+        font=("Segoe UI", 9)
+    )
+    info_label.pack(anchor="w", pady=(6, 10))
+
+    def update(val=None):
+        beta = beta_slider.get()
+        gamma = gamma_slider.get()
+
+        I0 = I0_slider.get()
         S0 = 1 - I0
-        m = s_mask.val if mask_on[0] else 0
-        v = s_vax.val if vax_on[0] else 0
-        p = s_recover.val if recover_on[0] else 0
-        d = s_dist.val if dist_on[0] else 0
+
+        m = mask_slider.get() if mask_on.get() else 0
+        v = vax_slider.get() if vax_on.get() else 0
+        p = recover_slider.get() if recover_on.get() else 0
+        d = dist_slider.get() if dist_on.get() else 0
+
         beta_eff = beta * (1 - m) * (1 - v) * (1 - p) * (1 - d)
 
         t, S, I, R = simulate(S0, I0, R0_init, beta_eff, gamma)
-        lS.set_ydata(S)
-        lI.set_ydata(I)
-        lR.set_ydata(R)
+
+        lS.set_data(t, S)
+        lI.set_data(t, I)
+        lR.set_data(t, R)
+
         ax.relim()
         ax.autoscale_view()
-        fig.canvas.draw_idle()
 
-    for s in [s_beta, s_gamma, s_I0, s_mask, s_vax, s_recover, s_dist]:
-        s.on_changed(update)
+        peak_i = np.max(I)
+        peak_day = t[np.argmax(I)]
 
-    plt.show()
+        info_label.config(
+            text=(
+                f"Effektív β: {beta_eff:.3f}\n"
+                f"Csúcspont napja: {peak_day:.1f}\n"
+                f"Max fertőzöttek: {peak_i:,.0f} fő"
+            )
+        )
 
-if __name__ == "__main__":
-    run()
+        canvas.draw()
+
+    tk.Checkbutton(
+        check_frame,
+        text="Maszk aktív",
+        variable=mask_on,
+        command=update
+    ).pack(anchor="w")
+
+    tk.Checkbutton(
+        check_frame,
+        text="Oltás aktív",
+        variable=vax_on,
+        command=update
+    ).pack(anchor="w")
+
+    tk.Checkbutton(
+        check_frame,
+        text="Immunitás aktív",
+        variable=recover_on,
+        command=update
+    ).pack(anchor="w")
+
+    tk.Checkbutton(
+        check_frame,
+        text="Távolságtartás aktív",
+        variable=dist_on,
+        command=update
+    ).pack(anchor="w")
+
+    button_frame = tk.Frame(control_frame)
+    button_frame.pack(anchor="w", pady=(5, 0))
+
+    def reset():
+        beta_slider.set(beta_init)
+        gamma_slider.set(gamma_init)
+        I0_slider.set(I0_init)
+        mask_slider.set(0.0)
+        vax_slider.set(0.0)
+        recover_slider.set(0.0)
+        dist_slider.set(0.0)
+
+        mask_on.set(True)
+        vax_on.set(True)
+        recover_on.set(True)
+        dist_on.set(True)
+
+        update()
+
+    tk.Button(
+        button_frame,
+        text="Alaphelyzet",
+        width=18,
+        command=reset
+    ).pack(anchor="w")
+
+    for s in [
+        beta_slider,
+        gamma_slider,
+        I0_slider,
+        mask_slider,
+        vax_slider,
+        recover_slider,
+        dist_slider
+    ]:
+        s.config(command=update)
+
+    update()

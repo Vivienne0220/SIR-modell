@@ -1,36 +1,69 @@
 import tkinter as tk
-from tkinter import messagebox
 import sir_model
 import sird_model
 import seirdvh_model
 
-def open_sir_model():
+BG = "#f4f6f8"
+BTN = "#4a6fa5"
+BTN_TXT = "white"
+
+
+def open_sir():
     sir_model.run()
 
-def open_epidemic():
+
+def open_sird():
     sird_model.run()
 
-def open_seirdvh_model():
+
+def open_seirdvh():
     seirdvh_model.run()
 
-# Ablak létrehozása
+
 root = tk.Tk()
-root.title("Főmenü")
-root.geometry("400x300")
-root.configure(bg="#f0f0f0")
+root.title("Járványmodellezési eszköz")
+root.geometry("420x320")
+root.configure(bg=BG)
 
-# Cím
-label = tk.Label(root, text="Válassz kategóriát", font=("Segoe UI", 16, "bold"), bg="#f0f0f0")
-label.pack(pady=30)
+title = tk.Label(
+    root,
+    text="Járvány modellező rendszer",
+    font=("Segoe UI", 18, "bold"),
+    bg=BG
+)
+title.pack(pady=30)
 
-# Gombok
-btn1 = tk.Button(root, text="Saját SIR modell", font=("Segoe UI", 12), width=20, command=open_sir_model)
-btn1.pack(pady=10)
+btn1 = tk.Button(
+    root,
+    text="SIR modell",
+    font=("Segoe UI", 12),
+    width=22,
+    bg=BTN,
+    fg=BTN_TXT,
+    command=open_sir
+)
+btn1.pack(pady=8)
 
-btn2 = tk.Button(root, text="SIRD modell", font=("Segoe UI", 12), width=20, command=open_epidemic)
-btn2.pack(pady=10)
+btn2 = tk.Button(
+    root,
+    text="SIRD modell",
+    font=("Segoe UI", 12),
+    width=22,
+    bg=BTN,
+    fg=BTN_TXT,
+    command=open_sird
+)
+btn2.pack(pady=8)
 
-btn3 = tk.Button(root, text="SEIHRD", font=("Segoe UI", 12), width=20, command=open_seirdvh_model)
-btn3.pack(pady=10)
+btn3 = tk.Button(
+    root,
+    text="SEIRDVH elemzés",
+    font=("Segoe UI", 12),
+    width=22,
+    bg=BTN,
+    fg=BTN_TXT,
+    command=open_seirdvh
+)
+btn3.pack(pady=8)
 
 root.mainloop()
