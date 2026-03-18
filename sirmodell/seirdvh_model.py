@@ -10,6 +10,9 @@ import pandas as pd
 plt.style.use("seaborn-v0_8-whitegrid")
 
 window_ref = None
+RECOVERY_DELAY = 14
+LINE_WIDTH = 1.2
+SMOOTH_WINDOW = 7
 
 def run():
     global window_ref
@@ -40,10 +43,10 @@ def run():
     right = tk.Frame(main)
     right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-    options = ["Magyarország", "Szlovákia"]
+    options = ["Magyarország", "Szlovákia", "Nitrai Kerület"]
     selected = tk.StringVar(value=options[0])
 
-    ttk.Label(left, text="Ország", font=("Segoe UI", 11)).pack(pady=10)
+    ttk.Label(left, text="Ország / régió", font=("Segoe UI", 11)).pack(pady=10)
 
     box = ttk.Combobox(
         left,
@@ -57,10 +60,10 @@ def run():
     legend_info = tk.Label(
         left,
         text=(
-            "Háttérjelölések:\n"
-            "Szürke = kezdeti időszak\n"
-            "Narancs = lockdown időszak\n"
-            "Zöld = oltási időszak"
+            "Nitrai Kerület esetén:\n"
+            "ahol a gyógyult érték\n"
+            "és az aktív érték\n"
+            "becsült adat."
         ),
         justify="left",
         font=("Segoe UI", 9)
@@ -79,23 +82,66 @@ def run():
 
     HU_CUMULATIVE_COLS = {"newcases", "recovered", "vaccines"}
 
+    def numeric(series):
+        return pd.to_numeric(series, errors="coerce").fillna(0).clip(lower=0)
+
+    def smooth(series):
+        return numeric(series).rolling(SMOOTH_WINDOW, min_periods=1).mean()
+
+    def estimate_recovered_seirdvh(df):
+        delayed_cases = numeric(df["newcases"]).shift(RECOVERY_DELAY).fillna(0)
+        delayed_deaths = numeric(df["death"]).shift(RECOVERY_DELAY).fillna(0)
+        recovered = (delayed_cases - delayed_deaths).clip(lower=0)
+        return recovered
+
+    def estimate_active_seirdvh(df, recovered):
+        cumulative_cases = numeric(df["newcases"]).cumsum()
+        cumulative_deaths = numeric(df["death"]).cumsum()
+        cumulative_recovered = numeric(recovered).cumsum()
+        active = cumulative_cases - cumulative_deaths - cumulative_recovered
+        return active.clip(lower=0)
+
     def load_country(country):
         if country == "Magyarország":
             file = "covid_hu.csv"
             lockdown = "2020-03-28"
             vaccine = "2021-01-01"
             cumulative_cols = HU_CUMULATIVE_COLS
-        else:
+
+            df = pd.read_csv(file, parse_dates=["date"]).sort_values("date").copy()
+            return df, lockdown, vaccine, cumulative_cols
+
+        elif country == "Szlovákia":
             file = "covid_sk.csv"
             lockdown = "2020-03-16"
             vaccine = "2021-01-06"
             cumulative_cols = set()
 
-        df = pd.read_csv(file, parse_dates=["date"]).sort_values("date").copy()
-        return df, lockdown, vaccine, cumulative_cols
+            df = pd.read_csv(file, parse_dates=["date"]).sort_values("date").copy()
+            return df, lockdown, vaccine, cumulative_cols
 
-    def numeric(series):
-        return pd.to_numeric(series, errors="coerce").fillna(0).clip(lower=0)
+        elif country == "Nitrai Kerület":
+            file = "covid_ni.csv"
+            lockdown = "2020-03-16"
+            vaccine = "2021-01-06"
+            cumulative_cols = set()
+
+            raw = pd.read_csv(file, sep=";").copy()
+            raw["Date"] = pd.to_datetime(raw["Date"], format="%Y.%m.%d")
+
+            df = pd.DataFrame({
+                "date": raw["Date"],
+                "newcases": numeric(raw["Newcases"]),
+                "death": numeric(raw["Death"]),
+                "hospital": numeric(raw["Hospital"]),
+                "vaccines": numeric(raw["Vaccination"]),
+                "positive": numeric(raw["Positive"])
+            }).sort_values("date").copy()
+
+            return df, lockdown, vaccine, cumulative_cols
+
+        else:
+            raise ValueError("Ismeretlen ország/régió.")
 
     def get_level_series(df, col):
         return numeric(df[col])
@@ -131,8 +177,8 @@ def run():
             if vac < end:
                 ax.axvspan(vac, end, color="green", alpha=0.10)
 
-            ax.axvline(lock, linestyle="--", color="darkorange", linewidth=1.1, alpha=0.7)
-            ax.axvline(vac, linestyle="--", color="darkgreen", linewidth=1.1, alpha=0.7)
+            ax.axvline(lock, linestyle="--", color="darkorange", linewidth=1.0, alpha=0.7)
+            ax.axvline(vac, linestyle="--", color="darkgreen", linewidth=1.0, alpha=0.7)
 
     def add_period_backgrounds_compare(hu_x, hu_lockdown, hu_vaccine, sk_lockdown, sk_vaccine):
         start = hu_x.min()
@@ -156,11 +202,11 @@ def run():
             if vac_start < end:
                 ax.axvspan(vac_start, end, color="green", alpha=0.10)
 
-            ax.axvline(hu_lock, linestyle="--", color="tab:red", linewidth=1.0, alpha=0.55)
-            ax.axvline(sk_lock, linestyle="--", color="tab:blue", linewidth=1.0, alpha=0.55)
+            ax.axvline(hu_lock, linestyle="--", color="tab:red", linewidth=0.9, alpha=0.55)
+            ax.axvline(sk_lock, linestyle="--", color="tab:blue", linewidth=0.9, alpha=0.55)
 
-            ax.axvline(hu_vac, linestyle=":", color="tab:red", linewidth=1.0, alpha=0.55)
-            ax.axvline(sk_vac, linestyle=":", color="tab:blue", linewidth=1.0, alpha=0.55)
+            ax.axvline(hu_vac, linestyle=":", color="tab:red", linewidth=0.9, alpha=0.55)
+            ax.axvline(sk_vac, linestyle=":", color="tab:blue", linewidth=0.9, alpha=0.55)
 
     def add_background_legend():
         for old_legend in fig.legends:
@@ -177,59 +223,124 @@ def run():
 
     def plot():
         try:
-            df, lockdown, vaccine, cumulative_cols = load_country(selected.get())
+            country = selected.get()
+            df, lockdown, vaccine, cumulative_cols = load_country(country)
             x = df["date"]
 
             for ax in axs.flat:
                 ax.clear()
 
-            infections = get_daily_series(df, "newcases", cumulative_cols)
-            deaths = get_level_series(df, "death")
-            recovered = get_daily_series(df, "recovered", cumulative_cols)
-            hospital = get_level_series(df, "hospital")
-            vaccines = get_daily_series(df, "vaccines", cumulative_cols)
+            if country == "Nitrai Kerület":
+                positive = smooth(df["positive"])
+                deaths = smooth(df["death"])
 
-            axs[0, 0].plot(
-                x,
-                infections,
-                color="tab:red",
-                linewidth=2
-            )
-            axs[0, 0].set_title("Új fertőzések")
-            axs[0, 0].set_ylim(0, infections.max() * 1.2 if infections.max() > 0 else 1)
+                recovered_raw = estimate_recovered_seirdvh(df)
+                recovered = smooth(recovered_raw)
+                active = smooth(estimate_active_seirdvh(df, recovered_raw))
 
-            axs[0, 1].plot(
-                x,
-                deaths,
-                color="black",
-                linewidth=2
-            )
-            axs[0, 1].set_title("Halálozás")
+                hospital = smooth(df["hospital"])
+                vaccines = smooth(df["vaccines"])
 
-            axs[1, 0].plot(
-                x,
-                recovered,
-                color="tab:green",
-                linewidth=2
-            )
-            axs[1, 0].set_title("Új gyógyult esetek")
+                axs[0, 0].plot(
+                    x,
+                    positive,
+                    color="tab:blue",
+                    linewidth=LINE_WIDTH,
+                    label="Pozitív tesztek"
+                )
+                axs[0, 0].set_title("Fertőzések / pozitív teszt")
+                axs[0, 0].legend(frameon=False)
 
-            axs[1, 1].plot(
-                x,
-                hospital.rolling(7, min_periods=1).mean(),
-                color="tab:orange",
-                linewidth=2,
-                label="Kórház"
-            )
-            axs[1, 1].plot(
-                x,
-                vaccines.rolling(7, min_periods=1).mean(),
-                color="purple",
-                linewidth=2,
-                label="Oltás"
-            )
-            axs[1, 1].set_title("Kórház / Napi oltás")
-            axs[1, 1].legend(frameon=False)
+                axs[0, 1].plot(
+                    x,
+                    deaths,
+                    color="black",
+                    linewidth=LINE_WIDTH
+                )
+                axs[0, 1].set_title("Halálozás")
+
+                axs[1, 0].plot(
+                    x,
+                    recovered,
+                    color="tab:green",
+                    linewidth=LINE_WIDTH,
+                    label="Becsült gyógyult"
+                )
+                axs[1, 0].plot(
+                    x,
+                    active,
+                    color="purple",
+                    linewidth=LINE_WIDTH,
+                    label="Becsült aktív"
+                )
+                axs[1, 0].set_title("SEIRDVH becslés")
+                axs[1, 0].legend(frameon=False)
+
+                axs[1, 1].plot(
+                    x,
+                    hospital,
+                    color="tab:orange",
+                    linewidth=LINE_WIDTH,
+                    label="Kórház"
+                )
+                axs[1, 1].plot(
+                    x,
+                    vaccines,
+                    color="teal",
+                    linewidth=LINE_WIDTH,
+                    label="Oltás"
+                )
+                axs[1, 1].set_title("Kórház / oltás")
+                axs[1, 1].legend(frameon=False)
+
+            else:
+                infections = smooth(get_daily_series(df, "newcases", cumulative_cols))
+                deaths = smooth(get_daily_series(df, "death", cumulative_cols))
+                recovered = smooth(get_daily_series(df, "recovered", cumulative_cols))
+                hospital = smooth(get_level_series(df, "hospital"))
+                vaccines = smooth(get_daily_series(df, "vaccines", cumulative_cols))
+
+                axs[0, 0].plot(
+                    x,
+                    infections,
+                    color="tab:red",
+                    linewidth=LINE_WIDTH
+                )
+                axs[0, 0].set_title("Új fertőzések")
+                axs[0, 0].set_ylim(0, infections.max() * 1.2 if infections.max() > 0 else 1)
+
+                axs[0, 1].plot(
+                    x,
+                    deaths,
+                    color="black",
+                    linewidth=LINE_WIDTH
+                )
+                axs[0, 1].set_title("Halálozás")
+
+                axs[1, 0].plot(
+                    x,
+                    recovered,
+                    color="tab:green",
+                    linewidth=LINE_WIDTH
+                )
+                axs[1, 0].set_title("Új gyógyult esetek")
+
+                axs[1, 1].plot(
+                    x,
+                    hospital,
+                    color="tab:orange",
+                    linewidth=LINE_WIDTH,
+                    label="Kórház"
+                )
+                axs[1, 1].plot(
+                    x,
+                    vaccines,
+                    color="purple",
+                    linewidth=LINE_WIDTH,
+                    label="Oltás"
+                )
+                axs[1, 1].set_title("Kórház / Napi oltás")
+                axs[1, 1].legend(frameon=False)
 
             format_axes()
             add_period_backgrounds_single(x, lockdown, vaccine)
@@ -255,8 +366,8 @@ def run():
             hu_daily_cases = get_daily_series(hu, "newcases", hu_cum)
             sk_daily_cases = get_daily_series(sk, "newcases", sk_cum)
 
-            hu_deaths_level = get_level_series(hu, "death")
-            sk_deaths_level = get_level_series(sk, "death")
+            hu_daily_deaths = get_daily_series(hu, "death", hu_cum)
+            sk_daily_deaths = get_daily_series(sk, "death", sk_cum)
 
             hu_daily_rec = get_daily_series(hu, "recovered", hu_cum)
             sk_daily_rec = get_daily_series(sk, "recovered", sk_cum)
@@ -264,84 +375,88 @@ def run():
             hu_hosp = get_level_series(hu, "hospital")
             sk_hosp = get_level_series(sk, "hospital")
 
-            hu_cases = hu_daily_cases / pop_hu * 100000
-            sk_cases = sk_daily_cases / pop_sk * 100000
+            hu_cases = smooth(hu_daily_cases / pop_hu * 100000)
+            sk_cases = smooth(sk_daily_cases / pop_sk * 100000)
 
-            hu_deaths = hu_deaths_level / pop_hu * 100000
-            sk_deaths = sk_deaths_level / pop_sk * 100000
+            hu_deaths = smooth(hu_daily_deaths / pop_hu * 100000)
+            sk_deaths = smooth(sk_daily_deaths / pop_sk * 100000)
 
-            hu_rec = hu_daily_rec.rolling(7, min_periods=1).mean() / pop_hu * 100000
-            sk_rec = sk_daily_rec.rolling(7, min_periods=1).mean() / pop_sk * 100000
+            hu_rec = smooth(hu_daily_rec / pop_hu * 100000)
+            sk_rec = smooth(sk_daily_rec / pop_sk * 100000)
 
-            hu_hosp_100k = hu_hosp.rolling(7, min_periods=1).mean() / pop_hu * 100000
-            sk_hosp_100k = sk_hosp.rolling(7, min_periods=1).mean() / pop_sk * 100000
+            hu_hosp_100k = smooth(hu_hosp / pop_hu * 100000)
+            sk_hosp_100k = smooth(sk_hosp / pop_sk * 100000)
 
             axs[0, 0].plot(
                 hu["date"],
                 hu_cases,
                 color="tab:red",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Magyarország"
             )
             axs[0, 0].plot(
                 sk["date"],
                 sk_cases,
                 color="tab:blue",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Szlovákia"
             )
-            axs[0, 0].set_title("Új fertőzések / 100k")
+            axs[0, 0].set_title("Új fertőzések")
+            axs[0, 0].set_ylabel("Esetszám / 100 000 lakos")
             axs[0, 0].legend(frameon=False)
 
             axs[0, 1].plot(
                 hu["date"],
                 hu_deaths,
                 color="tab:red",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Magyarország"
             )
             axs[0, 1].plot(
                 sk["date"],
                 sk_deaths,
                 color="tab:blue",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Szlovákia"
             )
-            axs[0, 1].set_title("Halálozás / 100k")
+            axs[0, 1].set_title("Halálozás")
+            axs[0, 1].set_ylabel("Esetszám / 100 000 lakos")
             axs[0, 1].legend(frameon=False)
 
             axs[1, 0].plot(
                 hu["date"],
                 hu_rec,
                 color="tab:red",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Magyarország"
             )
             axs[1, 0].plot(
                 sk["date"],
                 sk_rec,
                 color="tab:blue",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Szlovákia"
             )
-            axs[1, 0].set_title("Új gyógyult / 100k")
+            axs[1, 0].set_title("Új gyógyult")
+            axs[1, 0].set_ylabel("Esetszám / 100 000 lakos")
             axs[1, 0].legend(frameon=False)
 
             axs[1, 1].plot(
                 hu["date"],
                 hu_hosp_100k,
                 color="tab:red",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Magyarország"
             )
             axs[1, 1].plot(
                 sk["date"],
                 sk_hosp_100k,
                 color="tab:blue",
-                linewidth=2,
+                linewidth=LINE_WIDTH,
                 label="Szlovákia"
             )
-            axs[1, 1].set_title("Kórház / 100k")
+            axs[1, 1].set_title("Kórház")
+            axs[1, 1].set_ylabel("Esetszám / 100 000 lakos")
             axs[1, 1].legend(frameon=False)
 
             format_axes()
